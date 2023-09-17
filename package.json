@@ -1,0 +1,13 @@
+{
+  "name": "whatsapp-community-bot",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Tool to detect idle users inside a WhatsApp community",
+  "author": "Pez Cuckow <email@pezcuckow.com>",
+  "main": "index.js",
+  "dependencies": {
+    "debug-level": "^3.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "git@github.com:pedroslopez/whatsapp-web.js.git#152f0a64cdffdfb4d638043f537f87b2a6ebc492"
+  }
+}
