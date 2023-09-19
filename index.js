@@ -36,6 +36,10 @@ const TYPES_OF_MESSAGES_TO_COUNT = new Set([
   MessageTypes.DOCUMENT,
   MessageTypes.STICKER,
   MessageTypes.LOCATION,
+
+  MessageTypes.REACTION, // emoji reaction
+  MessageTypes.LIST_RESPONSE, // poll
+  MessageTypes.BUTTONS_RESPONSE, // wa business buttons
 ])
 
 // Handles events
