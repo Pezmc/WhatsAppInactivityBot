@@ -9,5 +9,11 @@
     "debug-level": "^3.0.0",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "git@github.com:pedroslopez/whatsapp-web.js.git#152f0a64cdffdfb4d638043f537f87b2a6ebc492"
+  },
+  "devDependencies": {
+    "eslint": "^8.49.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-import": "^2.28.1",
+    "prettier": "^3.0.3"
   }
 }

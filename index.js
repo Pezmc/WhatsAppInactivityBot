@@ -1,10 +1,9 @@
-const { Client, LocalAuth, MessageTypes } = require('whatsapp-web.js')
-
-const qrcode = require('qrcode-terminal')
-
+const fs = require('fs')
 const util = require('util')
 
-const { Log, logger } = require('debug-level')
+const { Log } = require('debug-level')
+const qrcode = require('qrcode-terminal')
+const { Client, LocalAuth, MessageTypes } = require('whatsapp-web.js')
 
 const log = new Log('whatsapp-community-bot')
 
@@ -16,14 +15,12 @@ const client = new Client({
   },
 })
 
-function detailedLog(label, object) {
-  console.log(label, util.inspect(object, { depth: 3, colors: true }))
-}
-
 const COMMUNITY_ID = '120363047641738769@g.us'
-const MESSAGES_TO_CONSIDER_RECENT = 100
+const MESSAGES_TO_CONSIDER_RECENT = 999999999
 
 const NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP = 10
+
+const INTERSECTION_FILE_NAME = 'group-intersections.csv'
 
 const TYPES_OF_MESSAGES_TO_COUNT = new Set([
   MessageTypes.TEXT,
@@ -111,14 +108,17 @@ client.on('ready', async () => {
       }
     }
 
-    usersByGroup.set(chat.name, chat.participants.map((user) => user.id._serialized))
+    usersByGroup.set(
+      chat.name,
+      chat.participants.map((user) => user.id._serialized)
+    )
   }
 
   log.info(
     `Loaded a total of ${participants.size} users including ${admins.size} admins (and ${communityAdmins.length} community admins)`
   )
 
-
+  //await findInactiveUsers(sortedChats, participants, admins)
   await reportGroupIntersections(usersByGroup)
 })
 
@@ -179,7 +179,7 @@ client.on('group_update', (notification) => {
 })
 
 client.on('incoming_call', (call) => {
-  log.debug('incoming_call', cal)
+  log.debug('incoming_call', call)
 })
 
 client.on('media_uploaded', (message) => {
@@ -222,19 +222,25 @@ client.initialize()
 
 log.info('Client initializing')
 
+// eslint-disable-next-line no-unused-vars
+function detailedLog(label, object) {
+  console.log(label, util.inspect(object, { depth: 3, colors: true }))
+}
+
 function convertToCSV(arr) {
   const array = [Object.keys(arr[0])].concat(arr)
 
-  return array.map(it => {
-    return Object.values(it).toString()
-  }).join('\n')
+  return array
+    .map((it) => {
+      return Object.values(it).toString()
+    })
+    .join('\n')
 }
 
 async function reportGroupIntersections(usersByGroupMap) {
   const groupIntersections = {}
 
   for (const [groupName, userIds] of usersByGroupMap.entries()) {
-
     const groupIntersection = { name: groupName }
 
     for (const [otherGroupName, otherUserIds] of usersByGroupMap.entries()) {
@@ -252,7 +258,8 @@ async function reportGroupIntersections(usersByGroupMap) {
     groupIntersections[groupName] = groupIntersection
   }
 
-  console.log(convertToCSV(Object.values(groupIntersections)))
+  console.info(`Group intersections have been written to ${INTERSECTION_FILE_NAME}`)
+  fs.writeFileSync(INTERSECTION_FILE_NAME, convertToCSV(Object.values(groupIntersections)));
 }
 
 async function findInactiveUsers(sortedChats, participants, admins) {
@@ -351,7 +358,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       messagesPerUserInThisChat.entries()
     )
       .sort(
-        ([aUserId, aMessages], [bUserId, bMessages]) =>
+        ([_aUserId, aMessages], [_bUserId, bMessages]) =>
           bMessages.length - aMessages.length
       )
       .splice(0, NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP)
@@ -367,7 +374,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
 
   const usersToConsiderForInactivity = Array.from(
     participants.entries()
-  ).filter(([userId, user]) => !admins.has(userId))
+  ).filter(([userId, _user]) => !admins.has(userId))
 
   log.info(
     `Of ${participants.size} considering ${usersToConsiderForInactivity.length} as potentially inactive`
@@ -378,20 +385,96 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       user.messageCount = user.messages?.length ?? 0
       return [userId, user]
     })
-    .filter(([userId, user]) => user.messageCount === 0)
+    .filter(([_userId, user]) => user.messageCount === 0)
 
   log.info(
     `Found ${inactiveUsers.length} users who haven't sent a message in the last ${MESSAGES_TO_CONSIDER_RECENT} messages of any group`
   )
 
+  //detailedLog('inactiveUsers', inactiveUsers)
   const usersWhoHaveNotReadAMessage = inactiveUsers.filter(
-    ([userId, user]) => !idsThatHaveReadMessages.has(userId)
+    ([userId, _user]) => !idsThatHaveReadMessages.has(userId)
   )
   const usersWhoHaveNotReceivedAMessage = usersWhoHaveNotReadAMessage.filter(
-    ([userId, user]) => !idsThatHaveReceivedMessages.has(userId)
+    ([userId, _user]) => !idsThatHaveReceivedMessages.has(userId)
   )
 
   log.info(
     `Of those users ${usersWhoHaveNotReadAMessage.length} have not read a message (send by authenticated user) and ${usersWhoHaveNotReceivedAMessage.length} have never received a message`
   )
+
+  //detailedLog(usersWhoHaveNotReadAMessage.map(([userId, user]) => `${user.id._serialized}|||${user.groups.join(", ")}`).join("\n"))
+
+  console.log('Done')
 }
+
+/*
+const siebertNumbers = `2975667551
+4560905805
+32456210472
+32456244655
+32456407899
+32456624272
+32456630278
+32465236144
+32465315336
+32466027821
+32466461988
+32470618749
+32471402315
+32471898302
+32473550008
+32473751593
+32474802258
+32476752843
+32478177146
+32483264092
+32485237315
+32487194390
+32488071614
+32491194107
+32492488423
+32492883293
+32493887724
+32494368388
+32494435936
+32494848951
+32494990991
+32495732065
+32496609008
+32497363602
+32497701463
+32499235750
+32499288865
+33760189301
+36204518774
+36501217036
+36706389056
+38630339266
+38651269899
+48666828177
+79260925439
+306977019314
+306986060545
+351915979480
+380950183368
+393881425424
+420733436527
+886972345580
+905305542742
+919874238071
+919941387966
+2126726679783
+4366473744374
+4915735586156
+4915738399491
+4916094455601`.split('\n')
+
+  const siebertPeople = [];
+
+  siebertNumbers.forEach(number => {
+    const user = participants.get(`${number}@c.us`)
+    if (user) {
+      siebertPeople.push(user)
+    }
+  })*/
