@@ -76,6 +76,8 @@ client.on('ready', async () => {
     (a, b) => b.participants.length - a.participants.length
   )
 
+  const usersByGroup = new Map()
+
   for (const chat of sortedChats) {
     const chatUsers = chat.participants.filter((user) => !user.isAdmin)
     const chatAdmins = chat.participants.filter((user) => user.isAdmin)
@@ -96,8 +98,20 @@ client.on('ready', async () => {
         admins.set(userId, user)
       }
 
-      participants.set(user.id._serialized, user)
+      if (participants.has(userId)) {
+        const currentUserInfo = participants.get(userId)
+        participants.set(userId, {
+          ...currentUserInfo,
+          ...user,
+          groups: [...currentUserInfo.groups, chat.name],
+        })
+      } else {
+        user.groups = [chat.name]
+        participants.set(userId, user)
+      }
     }
+
+    usersByGroup.set(chat.name, chat.participants.map((user) => user.id._serialized))
   }
 
   log.info(
