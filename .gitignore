@@ -27,3 +27,5 @@ node_modules/
 .wwebjs_auth/
 .wwebjs_cache/
 .eslintcache
+group-intersections.csv
+.DS_Store

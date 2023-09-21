@@ -241,13 +241,9 @@ async function reportGroupIntersections(usersByGroupMap) {
   const groupIntersections = {}
 
   for (const [groupName, userIds] of usersByGroupMap.entries()) {
-    const groupIntersection = { name: groupName }
+    const groupIntersection = { Name: groupName }
 
     for (const [otherGroupName, otherUserIds] of usersByGroupMap.entries()) {
-      if (groupName === otherGroupName) {
-        continue
-      }
-
       const intersection = userIds.filter((userId) =>
         otherUserIds.includes(userId)
       )
@@ -258,8 +254,13 @@ async function reportGroupIntersections(usersByGroupMap) {
     groupIntersections[groupName] = groupIntersection
   }
 
-  console.info(`Group intersections have been written to ${INTERSECTION_FILE_NAME}`)
-  fs.writeFileSync(INTERSECTION_FILE_NAME, convertToCSV(Object.values(groupIntersections)));
+  console.info(
+    `Group intersections have been written to ${INTERSECTION_FILE_NAME}`
+  )
+  fs.writeFileSync(
+    INTERSECTION_FILE_NAME,
+    convertToCSV(Object.values(groupIntersections))
+  )
 }
 
 async function findInactiveUsers(sortedChats, participants, admins) {
@@ -368,7 +369,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
     }
 
     log.info(
-      `Additionally ${messagesCheckedForReadStatus} sent by authenticated user for read status`
+      `Additionally ${messagesCheckedForReadStatus} sent by authenticated user for read status were checked`
     )
   }
 
