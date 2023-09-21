@@ -221,6 +221,40 @@ client.on('message_revoke_me', (message) => {
 client.initialize()
 
 log.info('Client initializing')
+
+function convertToCSV(arr) {
+  const array = [Object.keys(arr[0])].concat(arr)
+
+  return array.map(it => {
+    return Object.values(it).toString()
+  }).join('\n')
+}
+
+async function reportGroupIntersections(usersByGroupMap) {
+  const groupIntersections = {}
+
+  for (const [groupName, userIds] of usersByGroupMap.entries()) {
+
+    const groupIntersection = { name: groupName }
+
+    for (const [otherGroupName, otherUserIds] of usersByGroupMap.entries()) {
+      if (groupName === otherGroupName) {
+        continue
+      }
+
+      const intersection = userIds.filter((userId) =>
+        otherUserIds.includes(userId)
+      )
+
+      groupIntersection[otherGroupName] = intersection.length / userIds.length
+    }
+
+    groupIntersections[groupName] = groupIntersection
+  }
+
+  console.log(convertToCSV(Object.values(groupIntersections)))
+}
+
 async function findInactiveUsers(sortedChats, participants, admins) {
   const missingUsersMessages = new Map()
 
