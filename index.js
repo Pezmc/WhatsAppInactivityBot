@@ -118,87 +118,8 @@ client.on('ready', async () => {
     `Loaded a total of ${participants.size} users including ${admins.size} admins (and ${communityAdmins.length} community admins)`
   )
 
-  /*
-  groupMetadata.parentGroup: {
-    server: 'g.us',
-    user: '120363047641738769',
-    _serialized: '120363047641738769@g.us'
-  },*/
 
-  const missingUsersMessages = new Map()
-
-  for (const chat of sortedChats) {
-    log.info(
-      `Checking ${MESSAGES_TO_CONSIDER_RECENT} most recent messages from ${chat.name}`
-    )
-
-    const recentMessages = await chat.fetchMessages({
-      limit: MESSAGES_TO_CONSIDER_RECENT,
-    })
-    const recentMessagesToCount = recentMessages.filter((message) =>
-      TYPES_OF_MESSAGES_TO_COUNT.has(message.type)
-    )
-
-    log.debug(
-      `Filtered out ${
-        recentMessages.length - recentMessagesToCount.length
-      } non-countable messages`
-    )
-
-    if (!recentMessagesToCount.length) {
-      log.warn(`Found no messages in ${chat.name} is the current authenticated user a member of this group?`)
-      continue;
-    }
-
-    const messagesPerUserInThisChat = new Map()
-    for (const message of recentMessagesToCount) {
-      const userId = message.author
-
-      if (!userId) {
-        // Skip system messages
-        continue
-      }
-
-      // This chat
-      if (messagesPerUserInThisChat.has(userId)) {
-        messagesPerUserInThisChat.get(userId).push(message)
-      } else {
-        messagesPerUserInThisChat.set(userId, [message])
-      }
-
-      // All chats
-      const user = participants.get(userId)
-      if (!user) {
-        log.warn(`Message from unknown user ${userId}, user not found in community, check this number - "${message.body.slice(0, 100)}..."`)
-        if (!missingUsersMessages.has(userId)) {
-          missingUsersMessages.set(userId, [])
-        }
-
-        missingUsersMessages.get(userId).push(message)
-      } else {
-        if (!user.messages) {
-          user.messages = [message]
-        } else {
-          user.messages.push(message)
-        }
-      }
-    }
-
-    const mostActiveUsersInGroup = Array.from(
-      messagesPerUserInThisChat.entries()
-    )
-      .sort(
-        ([aUserId, aMessages], [bUserId, bMessages]) =>
-          bMessages.length - aMessages.length
-      )
-      .splice(0, NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP)
-
-    for (const [userId, messages] of mostActiveUsersInGroup) {
-      log.debug(
-        `User ${userId} has sent ${messages.length} messages`
-      )
-    }
-  }
+  await reportGroupIntersections(usersByGroup)
 })
 
 client.on('message', (msg) => {
@@ -300,3 +221,143 @@ client.on('message_revoke_me', (message) => {
 client.initialize()
 
 log.info('Client initializing')
+async function findInactiveUsers(sortedChats, participants, admins) {
+  const missingUsersMessages = new Map()
+
+  const idsThatHaveReadMessages = new Set()
+  const idsThatHaveReceivedMessages = new Set()
+
+  for (const chat of sortedChats) {
+    log.info(
+      `Checking ${MESSAGES_TO_CONSIDER_RECENT} most recent messages from ${chat.name}`
+    )
+
+    const recentMessages = await chat.fetchMessages({
+      limit: MESSAGES_TO_CONSIDER_RECENT,
+    })
+    const recentMessagesToCount = recentMessages.filter((message) =>
+      TYPES_OF_MESSAGES_TO_COUNT.has(message.type)
+    )
+
+    log.debug(
+      `Filtered out ${
+        recentMessages.length - recentMessagesToCount.length
+      } non-countable messages`
+    )
+
+    if (!recentMessagesToCount.length) {
+      log.warn(
+        `Found no messages in ${chat.name} is the current authenticated user a member of this group?`
+      )
+      continue
+    }
+
+    let messagesCheckedForReadStatus = 0
+    const messagesPerUserInThisChat = new Map()
+    for (const message of recentMessagesToCount) {
+      const userId = message.author
+
+      if (!userId) {
+        // Skip system messages
+        continue
+      }
+
+      // Delivery data is only available for messages I sent
+      if (message.fromMe) {
+        const messageInfo = await message.getInfo()
+
+        const idsThatHaveReadMessage = messageInfo.read.map(
+          (user) => user.id._serialized
+        )
+        const idsThatHaveReceivedMessage = messageInfo.delivery.map(
+          (user) => user.id._serialized
+        )
+
+        idsThatHaveReadMessage.forEach((item) =>
+          idsThatHaveReadMessages.add(item)
+        )
+        idsThatHaveReceivedMessage.forEach((item) =>
+          idsThatHaveReceivedMessages.add(item)
+        )
+
+        messagesCheckedForReadStatus++
+      }
+
+      // This chat
+      if (messagesPerUserInThisChat.has(userId)) {
+        messagesPerUserInThisChat.get(userId).push(message)
+      } else {
+        messagesPerUserInThisChat.set(userId, [message])
+      }
+
+      // All chats
+      const user = participants.get(userId)
+      if (!user) {
+        log.warn(
+          `Message from unknown user ${userId}, user not found in community, check this number - "${message.body.slice(
+            0,
+            100
+          )}..."`
+        )
+        if (!missingUsersMessages.has(userId)) {
+          missingUsersMessages.set(userId, [])
+        }
+
+        missingUsersMessages.get(userId).push(message)
+      } else {
+        if (!user.messages) {
+          user.messages = [message]
+        } else {
+          user.messages.push(message)
+        }
+      }
+    }
+
+    const mostActiveUsersInGroup = Array.from(
+      messagesPerUserInThisChat.entries()
+    )
+      .sort(
+        ([aUserId, aMessages], [bUserId, bMessages]) =>
+          bMessages.length - aMessages.length
+      )
+      .splice(0, NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP)
+
+    for (const [userId, messages] of mostActiveUsersInGroup) {
+      log.debug(`User ${userId} has sent ${messages.length} messages`)
+    }
+
+    log.info(
+      `Additionally ${messagesCheckedForReadStatus} sent by authenticated user for read status`
+    )
+  }
+
+  const usersToConsiderForInactivity = Array.from(
+    participants.entries()
+  ).filter(([userId, user]) => !admins.has(userId))
+
+  log.info(
+    `Of ${participants.size} considering ${usersToConsiderForInactivity.length} as potentially inactive`
+  )
+
+  const inactiveUsers = usersToConsiderForInactivity
+    .map(([userId, user]) => {
+      user.messageCount = user.messages?.length ?? 0
+      return [userId, user]
+    })
+    .filter(([userId, user]) => user.messageCount === 0)
+
+  log.info(
+    `Found ${inactiveUsers.length} users who haven't sent a message in the last ${MESSAGES_TO_CONSIDER_RECENT} messages of any group`
+  )
+
+  const usersWhoHaveNotReadAMessage = inactiveUsers.filter(
+    ([userId, user]) => !idsThatHaveReadMessages.has(userId)
+  )
+  const usersWhoHaveNotReceivedAMessage = usersWhoHaveNotReadAMessage.filter(
+    ([userId, user]) => !idsThatHaveReceivedMessages.has(userId)
+  )
+
+  log.info(
+    `Of those users ${usersWhoHaveNotReadAMessage.length} have not read a message (send by authenticated user) and ${usersWhoHaveNotReceivedAMessage.length} have never received a message`
+  )
+}
