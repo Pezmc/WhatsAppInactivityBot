@@ -29,3 +29,7 @@ node_modules/
 .eslintcache
 group-intersections.csv
 .DS_Store
+
+# File output
+*inactive-users-undelivered.csv
+*inactive-users-unread.csv

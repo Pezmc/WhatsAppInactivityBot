@@ -1,27 +1,18 @@
-const fs = require('fs')
-const util = require('util')
+import fs from 'fs'
+import util from 'util'
 
-const { Log } = require('debug-level')
-const qrcode = require('qrcode-terminal')
-const { Client, LocalAuth, MessageTypes } = require('whatsapp-web.js')
+import { Log } from 'debug-level'
+import inquirer from 'inquirer'
+import qrcode from 'qrcode-terminal'
+import WhatsAppWeb from 'whatsapp-web.js'
 
-const log = new Log('whatsapp-community-bot')
+const { Client, LocalAuth, MessageTypes } = WhatsAppWeb
 
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: {
-    args: ['--no-sandbox'],
-    headless: false,
-  },
-})
-
+//// Config ////
 const COMMUNITY_ID = '120363047641738769@g.us'
-const MESSAGES_TO_CONSIDER_RECENT = 999999999
 
-const NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP = 10
-
-const INTERSECTION_FILE_NAME = 'group-intersections.csv'
-
+// Inactive users
+const DAYS_OF_MESSAGES_TO_CONSIDER_RECENT = 90
 const TYPES_OF_MESSAGES_TO_COUNT = new Set([
   MessageTypes.TEXT,
   MessageTypes.AUDIO,
@@ -39,13 +30,39 @@ const TYPES_OF_MESSAGES_TO_COUNT = new Set([
   MessageTypes.BUTTONS_RESPONSE, // wa business buttons
 ])
 
-// Handles events
+// People joining groups
+const TYPES_OF_MESSAGES_FOR_JOINS = new Set([MessageTypes.GP2])
+const SUBTYPES_OF_MESSAGES_FOR_JOINS = new Set([
+  'linked_group_join', // joins using community link
+  'invite_auto_add', // joins using group link
+  'add', // admin adds them
+])
+const DAYS_TO_CONSIDER_RECENT_JOINS = 30 // If someone has joined in this many days, they are not considered inactive
+const UNREAD_INACTIVE_USERS_FILE_NAME = 'inactive-users-unread.csv'
+const UNDELIVERED_INACTIVE_USERS_FILE_NAME = 'inactive-users-undelivered.csv'
+
+// Reporting
+const NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP = 10
+const INTERSECTION_FILE_NAME = 'group-intersections.csv'
+
+//// Setup ////
+const log = new Log('whatsapp-community-bot')
+
+const client = new Client({
+  authStrategy: new LocalAuth(),
+  puppeteer: {
+    args: ['--no-sandbox'],
+    headless: false,
+  },
+})
+
+//// Event Handling ////
 client.on('qr', (qr) => {
   qrcode.generate(qr, { small: true })
 })
 
 client.on('ready', async () => {
-  log.debug('Client is ready!')
+  log.debug('Client ready, version:', await client.getWWebVersion())
 
   const community = await client.getChatById(COMMUNITY_ID)
 
@@ -118,16 +135,14 @@ client.on('ready', async () => {
     `Loaded a total of ${participants.size} users including ${admins.size} admins (and ${communityAdmins.length} community admins)`
   )
 
-  //await findInactiveUsers(sortedChats, participants, admins)
-  await reportGroupIntersections(usersByGroup)
+  main(community, sortedChats, participants, admins, usersByGroup)
 })
 
 client.on('message', (msg) => {
   log.debug('Message received', msg)
 })
 
-// All other
-
+// All other events
 client.on('auth_failure', (message) => {
   log.debug('Auth failure', message)
 })
@@ -222,9 +237,10 @@ client.initialize()
 
 log.info('Client initializing')
 
+/// Helpers
 // eslint-disable-next-line no-unused-vars
 function detailedLog(label, object) {
-  console.log(label, util.inspect(object, { depth: 3, colors: true }))
+  console.log(label, util.inspect(object, { depth: 10, colors: true }))
 }
 
 function convertToCSV(arr) {
@@ -236,6 +252,53 @@ function convertToCSV(arr) {
     })
     .join('\n')
 }
+
+/// Interactivity
+
+async function main(
+  community,
+  sortedChats,
+  participants,
+  admins,
+  usersByGroup
+) {
+  do {
+    const answers = await inquirer.prompt([
+      {
+        type: 'rawlist',
+        name: 'action',
+        message: 'Which would you like to do?',
+        choices: [
+          { name: 'Report Group Intersections', value: 'report_intersections' },
+          { name: 'Report Inactive Users', value: 'report_inactive' },
+          { name: 'Remove Users', value: 'remove_users' },
+          new inquirer.Separator(),
+          { name: 'Exit', value: 'exit' },
+        ],
+      },
+    ])
+
+    switch (answers.action) {
+      case 'report_intersections':
+        await reportGroupIntersections(usersByGroup)
+        break
+      case 'report_inactive':
+        await findInactiveUsers(sortedChats, participants, admins)
+        break
+      case 'remove_users':
+        await removeUsers(community, participants)
+        break
+      case 'exit':
+        process.exit(0)
+        break
+      default:
+        log.error('Unknown action', answers.action)
+        break
+    }
+  } while (true) // eslint-disable-line no-constant-condition
+}
+
+/// Main Functions
 
 async function reportGroupIntersections(usersByGroupMap) {
   const groupIntersections = {}
@@ -254,14 +317,18 @@ async function reportGroupIntersections(usersByGroupMap) {
     groupIntersections[groupName] = groupIntersection
   }
 
+  const fileName = `${new Date().toISOString().split('T')[0]}-${INTERSECTION_FILE_NAME}`
   console.info(
-    `Group intersections have been written to ${INTERSECTION_FILE_NAME}`
+    `Group intersections have been written to ${fileName}`
   )
   fs.writeFileSync(
-    INTERSECTION_FILE_NAME,
+    fileName,
     convertToCSV(Object.values(groupIntersections))
   )
 }
+
+const MESSAGES_TO_CONSIDER_RECENT = 9999999999 // Infinity is not supported
+const SECONDS_IN_DAY = 60 * 60 * 24
 
 async function findInactiveUsers(sortedChats, participants, admins) {
   const missingUsersMessages = new Map()
@@ -269,16 +336,23 @@ async function findInactiveUsers(sortedChats, participants, admins) {
   const idsThatHaveReadMessages = new Set()
   const idsThatHaveReceivedMessages = new Set()
 
+  const secondsOfMessagesToConsiderRecent =
+    DAYS_OF_MESSAGES_TO_CONSIDER_RECENT * SECONDS_IN_DAY
+
   for (const chat of sortedChats) {
     log.info(
-      `Checking ${MESSAGES_TO_CONSIDER_RECENT} most recent messages from ${chat.name}`
+      `Loading ${MESSAGES_TO_CONSIDER_RECENT} most recent messages from ${chat.name} and considering only those from last ${DAYS_OF_MESSAGES_TO_CONSIDER_RECENT} days`
     )
 
     const recentMessages = await chat.fetchMessages({
       limit: MESSAGES_TO_CONSIDER_RECENT,
     })
-    const recentMessagesToCount = recentMessages.filter((message) =>
-      TYPES_OF_MESSAGES_TO_COUNT.has(message.type)
+
+    const recentMessagesToCount = recentMessages.filter(
+      (message) =>
+        TYPES_OF_MESSAGES_TO_COUNT.has(message.type) &&
+        message.timestamp >
+          (Date.now() - secondsOfMessagesToConsiderRecent * 1000) / 1000
     )
 
     log.debug(
@@ -297,12 +371,14 @@ async function findInactiveUsers(sortedChats, participants, admins) {
     let messagesCheckedForReadStatus = 0
     const messagesPerUserInThisChat = new Map()
     for (const message of recentMessagesToCount) {
-      const userId = message.author
-
+      let userId = message.author
       if (!userId) {
         // Skip system messages
         continue
       }
+
+      // Fix API issue where user ID is not properly formatted
+      userId = userId.replace(/:\d+@/, '@')
 
       // Delivery data is only available for messages I sent
       if (message.fromMe) {
@@ -368,6 +444,53 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       log.debug(`User ${userId} has sent ${messages.length} messages`)
     }
 
+    // Check join and group add events separately
+    const secondsToConsiderJoinsAsRecent =
+      SECONDS_IN_DAY * DAYS_TO_CONSIDER_RECENT_JOINS
+
+    const groupJoinMessages = recentMessages.filter((message) => {
+      return (
+        TYPES_OF_MESSAGES_FOR_JOINS.has(message.type) &&
+        SUBTYPES_OF_MESSAGES_FOR_JOINS.has(message.rawData.subtype) &&
+        message.timestamp >
+          (Date.now() - secondsToConsiderJoinsAsRecent * 1000) / 1000
+      )
+    })
+
+    log.info(
+      `Considering ${groupJoinMessages.length} join events from the last ${DAYS_TO_CONSIDER_RECENT_JOINS} days and marking those users active`
+    )
+
+    for (const message of groupJoinMessages) {
+      const userId = message.id.participant._serialized // user that was added by someone or added themselves
+
+      if (!userId) {
+        // Skip system messages
+        continue
+      }
+
+      // All chats
+      const user = participants.get(userId)
+      if (!user) {
+        log.warn(
+          `Join event from unknown user ${userId}, user not found in community, check this number`
+        )
+
+        if (!missingUsersMessages.has(userId)) {
+          missingUsersMessages.set(userId, [])
+        }
+
+        missingUsersMessages.get(userId).push(message)
+      } else {
+        log.debug(userId, 'has joined recently in', chat.name)
+        if (!user.messages) {
+          user.messages = [message]
+        } else {
+          user.messages.push(message)
+        }
+      }
+    }
+
     log.info(
       `Additionally ${messagesCheckedForReadStatus} sent by authenticated user for read status were checked`
     )
@@ -389,7 +512,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
     .filter(([_userId, user]) => user.messageCount === 0)
 
   log.info(
-    `Found ${inactiveUsers.length} users who haven't sent a message in the last ${MESSAGES_TO_CONSIDER_RECENT} messages of any group`
+    `Found ${inactiveUsers.length} users who haven't sent a message or joined a group in the last ${DAYS_OF_MESSAGES_TO_CONSIDER_RECENT} days (checked last ${MESSAGES_TO_CONSIDER_RECENT} messages) of any group`
   )
 
   //detailedLog('inactiveUsers', inactiveUsers)
@@ -404,78 +527,132 @@ async function findInactiveUsers(sortedChats, participants, admins) {
     `Of those users ${usersWhoHaveNotReadAMessage.length} have not read a message (send by authenticated user) and ${usersWhoHaveNotReceivedAMessage.length} have never received a message`
   )
 
-  //detailedLog(usersWhoHaveNotReadAMessage.map(([userId, user]) => `${user.id._serialized}|||${user.groups.join(", ")}`).join("\n"))
+  const unreadFileName = `${new Date().toISOString().split('T')[0]}-${UNREAD_INACTIVE_USERS_FILE_NAME}`
+  fs.writeFileSync(
+    unreadFileName,
+    convertToCSV(
+      usersWhoHaveNotReadAMessage.map(([userId, user]) => {
+        return {
+          'User ID': userId,
+          Messages: user.messageCount,
+          Groups: user.groups.join(' & '),
+        }
+      })
+    )
+  )
+  log.info(
+    `Inactive users who have not read a message have been written to ${unreadFileName}`
+  )
 
-  console.log('Done')
+  const undeliveredFileName = `${new Date().toISOString().split('T')[0]}-${UNDELIVERED_INACTIVE_USERS_FILE_NAME}`
+  fs.writeFileSync(
+    undeliveredFileName,
+    convertToCSV(
+      usersWhoHaveNotReceivedAMessage.map(([userId, user]) => {
+        return {
+          'User ID': userId,
+          Messages: user.messageCount,
+          Groups: user.groups.join(' & '),
+        }
+      })
+    )
+  )
+  log.info(
+    `Inactive users who have not had a message delivered have been written to ${undeliveredFileName}`
+  )
 }
 
-/*
-const siebertNumbers = `2975667551
-4560905805
-32456210472
-32456244655
-32456407899
-32456624272
-32456630278
-32465236144
-32465315336
-32466027821
-32466461988
-32470618749
-32471402315
-32471898302
-32473550008
-32473751593
-32474802258
-32476752843
-32478177146
-32483264092
-32485237315
-32487194390
-32488071614
-32491194107
-32492488423
-32492883293
-32493887724
-32494368388
-32494435936
-32494848951
-32494990991
-32495732065
-32496609008
-32497363602
-32497701463
-32499235750
-32499288865
-33760189301
-36204518774
-36501217036
-36706389056
-38630339266
-38651269899
-48666828177
-79260925439
-306977019314
-306986060545
-351915979480
-380950183368
-393881425424
-420733436527
-886972345580
-905305542742
-919874238071
-919941387966
-2126726679783
-4366473744374
-4915735586156
-4915738399491
-4916094455601`.split('\n')
+async function removeUsers(community, participants) {
+  do {
+    const answers = await inquirer.prompt([
+      {
+        type: 'rawlist',
+        name: 'action',
+        message: 'Which would you like to do?',
+        choices: [
+          { name: 'Remove a user', value: 'remove_user' },
+          { name: 'Remove several users', value: 'remove_users' },
+          new inquirer.Separator(),
+          { name: 'Exit', value: 'exit' },
+        ],
+      },
+    ])
 
-  const siebertPeople = [];
-
-  siebertNumbers.forEach(number => {
-    const user = participants.get(`${number}@c.us`)
-    if (user) {
-      siebertPeople.push(user)
+    switch (answers.action) {
+      case 'remove_user':
+        await promptToRemoveUser(community, participants)
+        break
+      case 'remove_users':
+        //await findInactiveUsers(sortedChats, participants, admins)
+        break
+      case 'exit':
+        return
+      default:
+        log.error('Unknown action', answers.action)
+        break
     }
-  })*/
+  } while (true) // eslint-disable-line no-constant-condition
+}
+
+async function promptToRemoveUser(community, participants) {
+  const answers = await inquirer.prompt([{
+    type: 'input',
+    name: 'user_id',
+    message: "What's the users number or uid",
+  }])
+
+  const userId = answers.user_id
+  if (!userId) {
+    log.error('No user ID provided, try again')
+    return
+  }
+
+  await removeUser(community, participants, userId)
+}
+
+async function removeUser(community, participants, userNumberOrId) {
+  let user 
+  if (userNumberOrId.includes('@')) {
+    user = participants.get(userNumberOrId)
+  } else {
+    user = Array.from(participants.values()).find((user) => user.id.user === userNumberOrId.replace('+', ''))
+  }
+
+  if (!user) {
+    log.error(`User with ID or number ${userNumberOrId} found in known community participants, try again`)
+    return
+  }
+
+  if (user.isAdmin || user.isSuperAdmin) {
+    log.error(`Trying to remove an admin, this is not supported`)
+    return
+  }
+
+  const contact = await client.getContactById(user.id._serialized)
+  if (!contact) {
+    log.error(`Unable to load contact matching ${user.id.number}`)
+    return
+  }
+
+  if (contact.isMe) {
+    log.error(`Trying to remove yourself, this is not supported`)
+    return
+  }
+
+  log.info(`Going to remove ${contact.name ?? 'unknown name'} (${contact.number}) from community and ${user.groups.join(' & ')}`)
+    
+  const answer = await inquirer.prompt([
+    {
+      name: "proceed",
+      type: "confirm",
+      message: "Should we proceed?",
+    },
+  ])
+
+  if (!answer.proceed) {
+    log.info("Skipping removal of user")
+    return
+  }
+
+  await community.removeParticipants([user.id._serialized])
+}
