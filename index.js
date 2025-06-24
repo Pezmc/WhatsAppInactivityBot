@@ -327,6 +327,7 @@ async function reportGroupIntersections(usersByGroupMap) {
   )
 }
 
+const ALL = 9999999999 
 const MESSAGES_TO_CONSIDER_RECENT = 9999999999 // Infinity is not supported
 const SECONDS_IN_DAY = 60 * 60 * 24
 
@@ -339,9 +340,11 @@ async function findInactiveUsers(sortedChats, participants, admins) {
   const secondsOfMessagesToConsiderRecent =
     DAYS_OF_MESSAGES_TO_CONSIDER_RECENT * SECONDS_IN_DAY
 
+  const allMessages = []
+
   for (const chat of sortedChats) {
-    log.info(
-      `Loading ${MESSAGES_TO_CONSIDER_RECENT} most recent messages from ${chat.name} and considering only those from last ${DAYS_OF_MESSAGES_TO_CONSIDER_RECENT} days`
+    log.debug(
+      `Loading ${MESSAGES_TO_CONSIDER_RECENT === ALL ? 'all' : MESSAGES_TO_CONSIDER_RECENT} most recent messages from ${chat.name} and considering only those from last ${DAYS_OF_MESSAGES_TO_CONSIDER_RECENT} days`
     )
 
     const recentMessages = await chat.fetchMessages({
@@ -376,6 +379,8 @@ async function findInactiveUsers(sortedChats, participants, admins) {
         // Skip system messages
         continue
       }
+       
+      allMessages.push(message)
 
       // Fix API issue where user ID is not properly formatted
       userId = userId.replace(/:\d+@/, '@')
@@ -411,7 +416,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       // All chats
       const user = participants.get(userId)
       if (!user) {
-        log.warn(
+        log.debug(
           `Message from unknown user ${userId}, user not found in community, check this number - "${message.body.slice(
             0,
             100
@@ -457,7 +462,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       )
     })
 
-    log.info(
+    log.debug(
       `Considering ${groupJoinMessages.length} join events from the last ${DAYS_TO_CONSIDER_RECENT_JOINS} days and marking those users active`
     )
 
@@ -472,7 +477,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       // All chats
       const user = participants.get(userId)
       if (!user) {
-        log.warn(
+        log.debug(
           `Join event from unknown user ${userId}, user not found in community, check this number`
         )
 
@@ -491,9 +496,9 @@ async function findInactiveUsers(sortedChats, participants, admins) {
       }
     }
 
-    log.info(
-      `Additionally ${messagesCheckedForReadStatus} sent by authenticated user for read status were checked`
-    )
+    const oldestDate = recentMessagesToCount?.[0].timestamp ? new Date(recentMessagesToCount?.[0].timestamp * 1000) : null
+
+    log.info(`Checked ${recentMessagesToCount.length} messages in ${chat.name}, plus ${groupJoinMessages.length} join events, and ${messagesCheckedForReadStatus} messages sent by authenticated user for read status, the oldest message was ${oldestDate.toISOString()}`)
   }
 
   const usersToConsiderForInactivity = Array.from(
@@ -512,7 +517,7 @@ async function findInactiveUsers(sortedChats, participants, admins) {
     .filter(([_userId, user]) => user.messageCount === 0)
 
   log.info(
-    `Found ${inactiveUsers.length} users who haven't sent a message or joined a group in the last ${DAYS_OF_MESSAGES_TO_CONSIDER_RECENT} days (checked last ${MESSAGES_TO_CONSIDER_RECENT} messages) of any group`
+    `Found ${inactiveUsers.length} users who haven't sent a message or joined a group in the last ${DAYS_OF_MESSAGES_TO_CONSIDER_RECENT} days (checked  ${allMessages.length} messages total)`
   )
 
   //detailedLog('inactiveUsers', inactiveUsers)
