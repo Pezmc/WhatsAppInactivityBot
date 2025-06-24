@@ -299,7 +299,8 @@ async function main(
         message: 'Which would you like to do?',
         choices: [
           { name: 'Report Group Intersections', value: 'report_intersections' },
-          { name: 'Report Inactive Users', value: 'report_inactive' },
+          { name: 'Report Inactive Users in Specific Group', value: 'report_inactive_specific_group' },
+          { name: 'Report Inactive Users in All Groups', value: 'report_inactive' },
           { name: 'Remove Users', value: 'remove_users' },
           new inquirer.Separator(),
           { name: 'Exit', value: 'exit' },
@@ -310,6 +311,9 @@ async function main(
     switch (answers.action) {
       case 'report_intersections':
         await reportGroupIntersections(usersByGroup)
+        break
+      case 'report_inactive_specific_group':
+        await findInactiveUsersInSpecificGroup(sortedChats, participants, admins)
         break
       case 'report_inactive':
         await findInactiveUsers(sortedChats, participants, admins)
@@ -359,6 +363,35 @@ async function reportGroupIntersections(usersByGroupMap) {
 const ALL = 9999999999 
 const MESSAGES_TO_CONSIDER_RECENT = 9999999999 // Infinity is not supported
 const SECONDS_IN_DAY = 60 * 60 * 24
+
+async function findInactiveUsersInSpecificGroup(sortedChats, participants, admins) {
+  debugger;
+
+  const answer = await inquirer.prompt([
+    {
+      type: 'rawlist',
+      name: 'group_id',
+      message: 'Which group would you like to report on?',
+      choices:  [
+        ...sortedChats.filter((chat) => !chat.groupMetadata.isParentGroup).map((chat) => ({ name: chat.name, value: chat.id._serialized })),
+        new inquirer.Separator(),
+        { name: 'Back', value: 'exit' },
+      ]
+    },
+  ])
+
+  if (answer.group_id === 'exit') {
+    return
+  }
+
+  const group = sortedChats.find((chat) => chat.id._serialized === answer.group_id)
+  if (!group) {
+    log.error('Group not found, exiting')
+    process.exit(1)
+  }
+
+  await findInactiveUsers([group], participants, admins)
+} 
 
 async function findInactiveUsers(sortedChats, participants, admins) {
   const missingUsersMessages = new Map()
