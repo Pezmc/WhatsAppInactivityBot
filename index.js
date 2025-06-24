@@ -64,19 +64,44 @@ client.on('qr', (qr) => {
 client.on('ready', async () => {
   log.debug('Client ready, version:', await client.getWWebVersion())
 
-  const community = await client.getChatById(COMMUNITY_ID)
+  const allChats = await client.getChats()
+
+  const communities = allChats.filter((chat) => chat.isGroup && chat.groupMetadata.isParentGroup)
+  
+  const answer = await inquirer.prompt([
+    {
+      type: 'rawlist',
+      name: 'community',
+      message: 'Which community would you like to report on?',
+      choices: [
+        ...communities.map((community) => ({ name: community.name, value: community.id._serialized })),
+        { name: 'Exit', value: null },
+      ],
+    },
+  ]) 
+
+  if (!answer.community) {
+    log.info('No community selected, exiting')
+    process.exit(0)
+  }
+
+  const communityId = answer.community
+  const community = await client.getChatById(communityId)
+
+  if (!community) {
+    log.error('Community not found, exiting')
+    process.exit(1)
+  }
 
   const communityAdmins = community.participants.filter((user) => user.isAdmin)
 
   log.info(`Grabbing all participants for "${community.name}"`)
   log.info(`Loaded ${communityAdmins.length} community admins`)
 
-  const allChats = await client.getChats()
-
   const communityChats = allChats
     .filter((chat) => chat.isGroup)
     .filter(
-      (chat) => chat.groupMetadata.parentGroup?._serialized === COMMUNITY_ID
+      (chat) => chat.groupMetadata.parentGroup?._serialized === communityId
     )
 
   log.info(
@@ -248,7 +273,11 @@ function convertToCSV(arr) {
 
   return array
     .map((it) => {
-      return Object.values(it).toString()
+      return Object.values(it)
+        .map((value) =>
+          '"' + String(value).replace(/"/g, '""') + '"'
+        )
+        .join(',')
     })
     .join('\n')
 }
