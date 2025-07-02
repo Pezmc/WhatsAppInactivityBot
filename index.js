@@ -44,6 +44,7 @@ const UNDELIVERED_INACTIVE_USERS_FILE_NAME = 'inactive-users-undelivered.csv'
 // Reporting
 const NUMBER_OF_ACTIVE_USERS_TO_REPORT_PER_GROUP = 10
 const INTERSECTION_FILE_NAME = 'group-intersections.csv'
+const USERS_ONLY_IN_ONE_GROUP_FILE_NAME = 'users-only-in-one-group.csv'
 
 //// Setup ////
 const log = new Log('whatsapp-community-bot')
@@ -301,6 +302,7 @@ async function main(
           { name: 'Report Group Intersections', value: 'report_intersections' },
           { name: 'Report Inactive Users in Specific Group', value: 'report_inactive_specific_group' },
           { name: 'Report Inactive Users in All Groups', value: 'report_inactive' },
+          { name: 'Report Users Only in One Group', value: 'report_users_only_in_one_group' },
           { name: 'Remove Users', value: 'remove_users' },
           new inquirer.Separator(),
           { name: 'Exit', value: 'exit' },
@@ -320,6 +322,9 @@ async function main(
         break
       case 'remove_users':
         await removeUsers(community, participants)
+        break
+      case 'report_users_only_in_one_group':
+        await reportUsersOnlyInOneGroup(sortedChats, participants, admins)
         break
       case 'exit':
         process.exit(0)
@@ -722,4 +727,21 @@ async function removeUser(community, participants, userNumberOrId) {
   }
 
   await community.removeParticipants([user.id._serialized])
+}
+
+async function reportUsersOnlyInOneGroup(sortedChats, participants, admins) {
+  const announceGroupNames = sortedChats.filter((chat) => chat.groupMetadata.announce).map((chat) => chat.name)
+  const usersOnlyInOneGroup = Array.from(participants.values()).filter((user) => user.groups.filter((groupName) => !announceGroupNames.includes(groupName)).length === 1)
+
+  const fileName = `${new Date().toISOString().split('T')[0]}-${USERS_ONLY_IN_ONE_GROUP_FILE_NAME}`
+
+  const usersOnlyInOneGroupCSV = usersOnlyInOneGroup.map((user) => {
+    return {
+      'User ID': user.id._serialized,
+      Group: user.groups.filter((groupName) => !announceGroupNames.includes(groupName)).join(' & '),
+    }
+  })
+
+  fs.writeFileSync(fileName, convertToCSV(usersOnlyInOneGroupCSV))
+  log.info(`Users only in one group have been written to ${fileName}`)
 }
