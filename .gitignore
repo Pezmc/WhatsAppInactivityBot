@@ -33,3 +33,4 @@ group-intersections.csv
 # File output
 *inactive-users-undelivered.csv
 *inactive-users-unread.csv
+*.csv
